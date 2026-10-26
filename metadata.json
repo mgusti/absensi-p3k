@@ -1,0 +1,6 @@
+{
+  "name": "AutoAbsen Kolase - Generator Dokumentasi Kehadiran",
+  "description": "Sistem absensi harian otomatis dan pembuat kolase foto dokumentasi kehadiran berbasis Google Forms & Google Sheets dengan template Elegan Beige, Formal Instansi, dan ekspor instan.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
