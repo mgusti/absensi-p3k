@@ -15,7 +15,7 @@ import { AddAttendeeModal } from './components/AddAttendeeModal.tsx';
 import { GoogleFormShareModal } from './components/GoogleFormShareModal.tsx';
 import { SyncSheetModal } from './components/SyncSheetModal.tsx';
 import { GoogleWorkspacePanel } from './components/GoogleWorkspacePanel.tsx';
-import { downloadCanvasAsPng, downloadAllPagesAsPdf } from './utils/collageRenderer.ts';
+import { downloadAllPagesAsPdf } from './utils/collageRenderer.ts';
 import { filterAttendees } from './utils/collageLogic.ts';
 import { saveAttendanceToFirestore, subscribeAttendance } from './services/firebase.ts';
 

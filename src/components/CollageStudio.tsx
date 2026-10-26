@@ -5,7 +5,6 @@
 
 import React, { useRef, useEffect, useState } from 'react';
 import {
-  Download,
   Share2,
   Copy,
   ChevronLeft,
@@ -38,7 +37,6 @@ import {
 } from '../utils/collageLogic.ts';
 import {
   renderCollagePage,
-  downloadCanvasAsPng,
   downloadAllPagesAsPdf,
   downloadAllPagesAsZip,
   copyCanvasToClipboard,
@@ -152,13 +150,6 @@ export const CollageStudio: React.FC<CollageStudioProps> = ({
     }
   };
 
-  const handleDownloadSingle = () => {
-    if (!canvasRef.current) return;
-    const pageNum = String(currentPageIndex + 1).padStart(2, '0');
-    const filename = `Kolase_${settings.selectedSession}_${settings.selectedDate}_Hal_${pageNum}.png`;
-    downloadCanvasAsPng(canvasRef.current, filename);
-    showToast(`Halaman ${currentPageIndex + 1} berhasil diunduh sebagai PNG.`);
-  };
 
   const handleDownloadAllZip = async () => {
     setIsDownloadingZip(true);
@@ -246,14 +237,6 @@ export const CollageStudio: React.FC<CollageStudioProps> = ({
             </div>
           </button>
 
-          <button
-            onClick={handleDownloadSingle}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-stone-900 hover:bg-stone-800 text-white rounded-lg shadow-sm transition-colors"
-            title="Unduh gambar halaman yang sedang aktif saat ini sebagai PNG"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Unduh PNG (Hal. {currentPageIndex + 1})</span>
-          </button>
 
           <button
             onClick={handleCopyClipboard}

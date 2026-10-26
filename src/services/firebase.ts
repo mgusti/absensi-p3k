@@ -293,7 +293,9 @@ export async function uploadCollageToDrive(
  * Mengatasi masalah foto Google Drive privat yang diblokir oleh halaman login / CORS saat dimuat di canvas.
  */
 export async function fetchDriveImageBlob(fileIdOrUrl: string): Promise<Blob | null> {
-  const fileId = extractDriveImageId(fileIdOrUrl);
+  // Accept both full Google Drive URLs and bare file IDs
+  const fileId = extractDriveImageId(fileIdOrUrl)
+    || (/^[a-zA-Z0-9_-]{20,}$/.test(fileIdOrUrl) ? fileIdOrUrl : null);
   if (!fileId) return null;
 
   const token = await getAccessToken();

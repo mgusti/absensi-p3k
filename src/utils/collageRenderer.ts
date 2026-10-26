@@ -50,9 +50,19 @@ export async function resolvePhotoUrl(rawUrl: string): Promise<string> {
       console.warn('Gagal mengambil blob Drive untuk file ID:', fileId, e);
     }
 
-    // Fallback to high-res thumbnail link
-    const fallback = `https://lh3.googleusercontent.com/d/${fileId}=w1000`;
-    return fallback;
+    // Fallback: fetch via lh3 URL to get CORS-safe Blob URL
+    const fallbackUrl = `https://lh3.googleusercontent.com/d/${fileId}=w1000`;
+    try {
+      const res = await fetch(fallbackUrl);
+      if (res.ok) {
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        resolvedUrlCache.set(rawUrl, objectUrl);
+        return objectUrl;
+      }
+    } catch {
+      // Last resort: return raw URL (may taint canvas)
+    }
   }
 
   return rawUrl;
@@ -92,21 +102,10 @@ export async function preloadImage(src: string): Promise<HTMLImageElement> {
 
     img.onerror = () => {
       console.warn('Gagal memuat gambar peserta:', resolved);
-      // Attempt visual fallback without crossOrigin if external URL failed
-      if (!isBlobOrData && img.crossOrigin) {
-        const fallbackImg = new Image();
-        fallbackImg.onload = () => {
-          imageCache.set(src, fallbackImg);
-          imageCache.set(resolved, fallbackImg);
-          resolve(fallbackImg);
-        };
-        fallbackImg.onerror = () => {
-          imageCache.set(src, img);
-          resolve(img);
-        };
-        fallbackImg.src = resolved;
-        return;
-      }
+      // Never retry without crossOrigin — that taints the canvas and
+      // blocks toDataURL/toBlob on PDF/PNG/ZIP export.
+      // Resolve with the failed img (naturalWidth === 0) so the
+      // renderer falls through to the avatar-initials fallback.
       imageCache.set(src, img);
       resolve(img);
     };
