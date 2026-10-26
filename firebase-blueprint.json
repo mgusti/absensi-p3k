@@ -1,0 +1,102 @@
+{
+  "entities": {
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily attendance record with participant details, session, photo URL, and validation status",
+      "type": "object",
+      "properties": {
+        "nip": {
+          "type": "string",
+          "description": "Nomor Induk Pegawai",
+          "maxLength": 30
+        },
+        "name": {
+          "type": "string",
+          "description": "Nama lengkap peserta",
+          "maxLength": 100
+        },
+        "session": {
+          "type": "string",
+          "description": "Sesi absensi",
+          "enum": ["Pagi", "Sore"]
+        },
+        "date": {
+          "type": "string",
+          "description": "Tanggal absensi YYYY-MM-DD",
+          "maxLength": 10
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "URL foto diri atau Google Drive photo URL",
+          "maxLength": 1000
+        },
+        "status": {
+          "type": "string",
+          "description": "Status validasi presensi",
+          "enum": ["valid", "duplicate_flagged", "overwritten"]
+        },
+        "department": {
+          "type": "string",
+          "description": "Unit kerja peserta",
+          "maxLength": 100
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Waktu submit ISO string",
+          "maxLength": 40
+        }
+      },
+      "required": ["nip", "name", "session", "date", "status"]
+    },
+    "CollageSettings": {
+      "title": "CollageSettings",
+      "description": "Settings for collage rendering and branding",
+      "type": "object",
+      "properties": {
+        "template": {
+          "type": "string",
+          "enum": ["beige", "formal", "minimal"]
+        },
+        "orientation": {
+          "type": "string",
+          "enum": ["portrait", "landscape"]
+        },
+        "institutionName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "unitName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "footerNote": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "duplicatePolicy": {
+          "type": "string",
+          "enum": ["reject", "flag", "overwrite"]
+        },
+        "selectedDate": {
+          "type": "string",
+          "maxLength": 10
+        },
+        "selectedSession": {
+          "type": "string",
+          "enum": ["Pagi", "Sore"]
+        }
+      },
+      "required": ["template", "orientation", "institutionName"]
+    }
+  },
+  "firestore": {
+    "/attendance/{recordId}": {
+      "schema": "AttendanceRecord",
+      "description": "Collection of attendance records"
+    },
+    "/settings/{settingsId}": {
+      "schema": "CollageSettings",
+      "description": "Global or per-institution collage settings"
+    }
+  }
+}

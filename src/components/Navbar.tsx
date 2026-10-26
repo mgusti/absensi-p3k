@@ -4,12 +4,13 @@
  */
 
 import React from 'react';
-import { Camera, Image as ImageIcon, FileSpreadsheet, Code2, Download } from 'lucide-react';
+import { Camera, Image as ImageIcon, FileSpreadsheet, Code2, Download, FileText } from 'lucide-react';
 
 interface NavbarProps {
   activeTab: 'studio' | 'form' | 'table' | 'script';
   setActiveTab: (tab: 'studio' | 'form' | 'table' | 'script') => void;
   onQuickDownload: () => void;
+  onOpenShareModal: () => void;
   totalAttendeesCount: number;
 }
 
@@ -17,6 +18,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   setActiveTab,
   onQuickDownload,
+  onOpenShareModal,
   totalAttendeesCount
 }) => {
   return (
@@ -88,14 +90,23 @@ export const Navbar: React.FC<NavbarProps> = ({
         </nav>
 
         {/* Zone 3: 1 primary action */}
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2.5 shrink-0">
+          <button
+            onClick={onOpenShareModal}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-stone-800 bg-stone-100 hover:bg-stone-200 border border-stone-200 rounded-lg transition-colors whitespace-nowrap shrink-0"
+            title="Bagikan Tautan & QR Code Google Form"
+          >
+            <span>📱 Bagikan Form</span>
+          </button>
+
           <button
             onClick={onQuickDownload}
-            className="flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs font-semibold text-white bg-stone-900 hover:bg-stone-800 rounded-lg shadow-sm transition-colors whitespace-nowrap shrink-0"
+            className="flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-sm transition-colors whitespace-nowrap shrink-0"
+            title="Unduh 1 file PDF lengkap berisi seluruh halaman kolase"
           >
-            <Download className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Unduh PNG Kolase</span>
-            <span className="sm:hidden">Unduh PNG</span>
+            <FileText className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Unduh PDF (1 File)</span>
+            <span className="sm:hidden">Unduh PDF</span>
           </button>
         </div>
       </div>

@@ -4,29 +4,114 @@
  */
 
 import { AttendanceRecord, CollageSettings } from '../types/attendance.ts';
-import { formatIndonesianDate } from './collageLogic.ts';
+import { formatIndonesianDate, generatePdfFileName, extractDriveImageId } from './collageLogic.ts';
+import { fetchDriveImageBlob } from '../services/firebase.ts';
 import JSZip from 'jszip';
+import { jsPDF } from 'jspdf';
 
+// Cache for resolved Object/Data URLs
+export const resolvedUrlCache = new Map<string, string>();
 // Cache for loaded HTMLImageElements
-const imageCache = new Map<string, HTMLImageElement>();
+export const imageCache = new Map<string, HTMLImageElement>();
 
-export function preloadImage(src: string): Promise<HTMLImageElement> {
-  if (imageCache.has(src)) {
-    return Promise.resolve(imageCache.get(src)!);
+/**
+ * Mengosongkan cache foto saat token otentikasi Google diperbarui
+ */
+export function clearImageCache(): void {
+  imageCache.clear();
+  resolvedUrlCache.clear();
+}
+
+/**
+ * Resolves Google Drive URLs into local, CORS-safe Blob/Data URLs using OAuth token if available,
+ * or fallback endpoints, so photos render sharply on Canvas and embed into PDF without tainting.
+ */
+export async function resolvePhotoUrl(rawUrl: string): Promise<string> {
+  if (!rawUrl) return '';
+  // Already safe local data or blob
+  if (rawUrl.startsWith('data:') || rawUrl.startsWith('blob:')) {
+    return rawUrl;
   }
-  return new Promise((resolve, reject) => {
+
+  if (resolvedUrlCache.has(rawUrl)) {
+    return resolvedUrlCache.get(rawUrl)!;
+  }
+
+  const fileId = extractDriveImageId(rawUrl);
+  if (fileId) {
+    try {
+      const blob = await fetchDriveImageBlob(fileId);
+      if (blob) {
+        const objectUrl = URL.createObjectURL(blob);
+        resolvedUrlCache.set(rawUrl, objectUrl);
+        return objectUrl;
+      }
+    } catch (e) {
+      console.warn('Gagal mengambil blob Drive untuk file ID:', fileId, e);
+    }
+
+    // Fallback to high-res thumbnail link
+    const fallback = `https://lh3.googleusercontent.com/d/${fileId}=w1000`;
+    return fallback;
+  }
+
+  return rawUrl;
+}
+
+export async function preloadImage(src: string): Promise<HTMLImageElement> {
+  if (imageCache.has(src)) {
+    const cached = imageCache.get(src)!;
+    if (cached.complete && cached.naturalWidth > 0) {
+      return cached;
+    }
+  }
+
+  const resolved = await resolvePhotoUrl(src);
+  if (resolved !== src && imageCache.has(resolved)) {
+    const cached = imageCache.get(resolved)!;
+    if (cached.complete && cached.naturalWidth > 0) {
+      imageCache.set(src, cached);
+      return cached;
+    }
+  }
+
+  return new Promise((resolve) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    const isBlobOrData = resolved.startsWith('blob:') || resolved.startsWith('data:');
+
+    // Only set anonymous crossOrigin for external HTTP/HTTPS URLs
+    if (!isBlobOrData) {
+      img.crossOrigin = 'anonymous';
+    }
+
     img.onload = () => {
+      imageCache.set(src, img);
+      imageCache.set(resolved, img);
+      resolve(img);
+    };
+
+    img.onerror = () => {
+      console.warn('Gagal memuat gambar peserta:', resolved);
+      // Attempt visual fallback without crossOrigin if external URL failed
+      if (!isBlobOrData && img.crossOrigin) {
+        const fallbackImg = new Image();
+        fallbackImg.onload = () => {
+          imageCache.set(src, fallbackImg);
+          imageCache.set(resolved, fallbackImg);
+          resolve(fallbackImg);
+        };
+        fallbackImg.onerror = () => {
+          imageCache.set(src, img);
+          resolve(img);
+        };
+        fallbackImg.src = resolved;
+        return;
+      }
       imageCache.set(src, img);
       resolve(img);
     };
-    img.onerror = () => {
-      // Return empty image on error rather than crashing
-      console.warn('Failed to load image:', src);
-      resolve(img);
-    };
-    img.src = src;
+
+    img.src = resolved;
   });
 }
 
@@ -245,7 +330,8 @@ export async function renderCollagePage(
       roundRect(ctx, photoX, photoY, photoWidth, photoHeight, 10);
       ctx.clip();
 
-      const cachedImg = imageCache.get(attendee.photoUrl);
+      const targetUrl = resolvedUrlCache.get(attendee.photoUrl) || attendee.photoUrl;
+      const cachedImg = imageCache.get(attendee.photoUrl) || imageCache.get(targetUrl);
       if (cachedImg && cachedImg.complete && cachedImg.naturalWidth > 0) {
         // Draw image aspect-fill
         const imgAspect = cachedImg.naturalWidth / cachedImg.naturalHeight;
@@ -261,13 +347,34 @@ export async function renderCollagePage(
         }
         ctx.drawImage(cachedImg, sx, sy, sw, sh, photoX, photoY, photoWidth, photoHeight);
       } else {
-        // Fallback photo placeholder
-        ctx.fillStyle = '#E2E8F0';
+        // High-fidelity fallback avatar with participant's initials
+        ctx.fillStyle = tmpl === 'formal' ? '#0F172A' : '#EAE4D5';
         ctx.fillRect(photoX, photoY, photoWidth, photoHeight);
-        ctx.fillStyle = '#64748B';
-        ctx.font = '500 14px "Plus Jakarta Sans", sans-serif';
+
+        // Silhouette avatar shape / monogram circle
+        ctx.fillStyle = tmpl === 'formal' ? '#1E293B' : '#D8CFBC';
+        ctx.beginPath();
+        ctx.arc(photoX + photoWidth / 2, photoY + photoHeight * 0.42, photoWidth * 0.24, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Initials in center of circle
+        const initials = attendee.name
+          .replace(/^(dr\.|drs\.|drg\.|ir\.|h\.|hj\.)\s+/i, '')
+          .split(' ')
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((n) => n[0].toUpperCase())
+          .join('') || 'P3K';
+
+        ctx.fillStyle = tmpl === 'formal' ? '#94A3B8' : '#78716C';
+        ctx.font = '700 24px "Plus Jakarta Sans", sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(attendee.name, photoX + photoWidth / 2, photoY + photoHeight / 2);
+        ctx.fillText(initials, photoX + photoWidth / 2, photoY + photoHeight * 0.45);
+
+        // Label at bottom
+        ctx.fillStyle = tmpl === 'formal' ? '#CBD5E1' : '#44403C';
+        ctx.font = '700 11px "Plus Jakarta Sans", sans-serif';
+        ctx.fillText('FOTO DOKUMENTASI', photoX + photoWidth / 2, photoY + photoHeight - 16);
       }
       ctx.restore();
 
@@ -380,6 +487,90 @@ export async function copyCanvasToClipboard(canvas: HTMLCanvasElement): Promise<
       }
     }, 'image/png');
   });
+}
+
+/**
+ * Render all collage pages into a single multi-page PDF document.
+ * If there are 2 images/pages (e.g. 7-12 attendees), the resulting PDF has exactly 2 pages.
+ * 1 image = 1 PDF page, rendered at high resolution matching the collage orientation.
+ */
+export async function generateCollagePdfBlob(
+  attendees: AttendanceRecord[],
+  settings: CollageSettings,
+  onProgress?: (current: number, total: number, phase: string) => void
+): Promise<{ blob: Blob; filename: string; pageCount: number }> {
+  const pages: AttendanceRecord[][] = [];
+  for (let i = 0; i < attendees.length; i += 6) {
+    pages.push(attendees.slice(i, i + 6));
+  }
+  const totalPages = Math.max(1, pages.length);
+
+  const isPortrait = settings.orientation === 'portrait';
+  // Aspect ratio matches canvas (portrait 1080x1350 = 4:5, landscape 1920x1080 = 16:9)
+  const orientation = isPortrait ? 'portrait' : 'landscape';
+  // Standard high-definition PDF page dimension in mm
+  const pdfWidth = isPortrait ? 210 : 297;
+  const pdfHeight = isPortrait ? Math.round(210 * (1350 / 1080)) : Math.round(297 * (1080 / 1920));
+
+  const pdf = new jsPDF({
+    orientation,
+    unit: 'mm',
+    format: [pdfWidth, pdfHeight],
+    compress: true
+  });
+
+  const offscreenCanvas = document.createElement('canvas');
+
+  for (let p = 0; p < totalPages; p++) {
+    if (onProgress) {
+      onProgress(p + 1, totalPages, `Merender halaman ${p + 1} dari ${totalPages}...`);
+    }
+
+    if (p > 0) {
+      pdf.addPage([pdfWidth, pdfHeight], orientation);
+    }
+
+    const pageRecords = pages[p] || [];
+    await renderCollagePage(
+      offscreenCanvas,
+      pageRecords,
+      p,
+      totalPages,
+      attendees.length,
+      settings
+    );
+
+    // High quality JPEG compression for optimal PDF size and razor-sharp clarity
+    const imgData = offscreenCanvas.toDataURL('image/jpeg', 0.95);
+    pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+  }
+
+  if (onProgress) {
+    onProgress(totalPages, totalPages, 'Menyusun dokumen PDF multi-halaman...');
+  }
+
+  const filename = generatePdfFileName(settings.selectedSession, settings.selectedDate, totalPages);
+  const blob = pdf.output('blob');
+
+  return { blob, filename, pageCount: totalPages };
+}
+
+/**
+ * Downloads all collage pages as a single multi-page PDF document.
+ */
+export async function downloadAllPagesAsPdf(
+  attendees: AttendanceRecord[],
+  settings: CollageSettings,
+  onProgress?: (current: number, total: number, phase: string) => void
+): Promise<{ filename: string; pageCount: number }> {
+  const { blob, filename, pageCount } = await generateCollagePdfBlob(attendees, settings, onProgress);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  return { filename, pageCount };
 }
 
 /**

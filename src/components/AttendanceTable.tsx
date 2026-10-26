@@ -3,9 +3,25 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { Search, Download, Trash2, Eye, Plus, CheckCircle2, AlertTriangle, FileSpreadsheet, X } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import {
+  Search,
+  Download,
+  Trash2,
+  Eye,
+  Plus,
+  CheckCircle2,
+  AlertTriangle,
+  FileSpreadsheet,
+  X,
+  Camera,
+  Upload,
+  Image as ImageIcon,
+  Check
+} from 'lucide-react';
 import { AttendanceRecord, AttendanceSession } from '../types/attendance.ts';
+import { matchPhotoFilenameToAttendee } from '../utils/collageLogic.ts';
+import { resolvedUrlCache } from '../utils/collageRenderer.ts';
 
 interface AttendanceTableProps {
   attendees: AttendanceRecord[];
@@ -13,6 +29,9 @@ interface AttendanceTableProps {
   onClearAll: () => void;
   onResetDemo: () => void;
   onOpenAddModal: () => void;
+  onOpenSyncModal: () => void;
+  onOpenShareModal: () => void;
+  onUpdateAttendees?: (updatedList: AttendanceRecord[]) => void;
 }
 
 export const AttendanceTable: React.FC<AttendanceTableProps> = ({
@@ -20,11 +39,90 @@ export const AttendanceTable: React.FC<AttendanceTableProps> = ({
   onDeleteAttendee,
   onClearAll,
   onResetDemo,
-  onOpenAddModal
+  onOpenAddModal,
+  onOpenSyncModal,
+  onOpenShareModal,
+  onUpdateAttendees
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [sessionFilter, setSessionFilter] = useState<string>('all');
-  const [selectedPhotoModal, setSelectedPhotoModal] = useState<{ url: string; name: string } | null>(null);
+  const [selectedPhotoModal, setSelectedPhotoModal] = useState<{ id: string; url: string; name: string } | null>(null);
+  const [batchNotice, setBatchNotice] = useState<string | null>(null);
+
+  const batchFileInputRef = useRef<HTMLInputElement | null>(null);
+  const singleFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [activeAttendeeIdForUpload, setActiveAttendeeIdForUpload] = useState<string | null>(null);
+
+  const handleSinglePhotoSelect = (attendeeId: string, file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      if (dataUrl && onUpdateAttendees) {
+        const updated = attendees.map((a) => (a.id === attendeeId ? { ...a, photoUrl: dataUrl } : a));
+        onUpdateAttendees(updated);
+        setBatchNotice(`Foto untuk peserta berhasil diperbarui.`);
+        setTimeout(() => setBatchNotice(null), 3500);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleBatchPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0 || !onUpdateAttendees) return;
+
+    let matchedCount = 0;
+    const fileList = Array.from(files);
+    const updatedMap = new Map<string, string>();
+
+    let pending = fileList.length;
+
+    fileList.forEach((file) => {
+      const matched = matchPhotoFilenameToAttendee(file.name, attendees);
+      if (matched) {
+        matchedCount++;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (event.target?.result) {
+            updatedMap.set(matched.id, event.target.result as string);
+          }
+          pending--;
+          if (pending === 0 && updatedMap.size > 0) {
+            const newList = attendees.map((a) => {
+              if (updatedMap.has(a.id)) {
+                return { ...a, photoUrl: updatedMap.get(a.id)! };
+              }
+              return a;
+            });
+            onUpdateAttendees(newList);
+            setBatchNotice(`✅ Sukses! ${updatedMap.size} foto berhasil dicocokkan otomatis & diperbarui ke data peserta.`);
+            setTimeout(() => setBatchNotice(null), 4000);
+          }
+        };
+        reader.readAsDataURL(file);
+      } else {
+        pending--;
+        if (pending === 0 && updatedMap.size > 0) {
+          const newList = attendees.map((a) => {
+            if (updatedMap.has(a.id)) {
+              return { ...a, photoUrl: updatedMap.get(a.id)! };
+            }
+            return a;
+          });
+          onUpdateAttendees(newList);
+          setBatchNotice(`✅ Sukses! ${updatedMap.size} foto berhasil dicocokkan otomatis & diperbarui ke data peserta.`);
+          setTimeout(() => setBatchNotice(null), 4000);
+        }
+      }
+    });
+
+    if (matchedCount === 0) {
+      setBatchNotice(`Tidak ada nama file foto yang cocok dengan NIP atau Nama peserta.`);
+      setTimeout(() => setBatchNotice(null), 4000);
+    }
+
+    if (batchFileInputRef.current) batchFileInputRef.current.value = '';
+  };
 
   // Filtered list
   const filtered = attendees.filter((item) => {
@@ -83,12 +181,65 @@ export const AttendanceTable: React.FC<AttendanceTableProps> = ({
             </div>
             <div className="py-4 flex justify-center">
               <img
-                src={selectedPhotoModal.url}
+                src={resolvedUrlCache.get(selectedPhotoModal.url) || selectedPhotoModal.url}
                 alt={selectedPhotoModal.name}
                 className="w-full max-h-[380px] object-cover rounded-xl border border-stone-200 shadow-inner"
               />
             </div>
+            <div className="pt-2 border-t border-stone-100 flex items-center justify-between">
+              <span className="text-[11px] text-stone-500">
+                {selectedPhotoModal.url.includes('drive.google.com') ? 'Foto Google Drive' : 'Foto Lokal'}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveAttendeeIdForUpload(selectedPhotoModal.id);
+                  singleFileInputRef.current?.click();
+                  setSelectedPhotoModal(null);
+                }}
+                className="px-3 py-1.5 text-xs font-semibold bg-stone-900 hover:bg-stone-800 text-white rounded-lg flex items-center gap-1.5"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>Ganti Foto Ini</span>
+              </button>
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* Hidden file pickers */}
+      <input
+        ref={batchFileInputRef}
+        type="file"
+        multiple
+        accept="image/*"
+        onChange={handleBatchPhotoUpload}
+        className="hidden"
+      />
+      <input
+        ref={singleFileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file && activeAttendeeIdForUpload) {
+            handleSinglePhotoSelect(activeAttendeeIdForUpload, file);
+          }
+          if (singleFileInputRef.current) singleFileInputRef.current.value = '';
+        }}
+        className="hidden"
+      />
+
+      {/* Notification banner */}
+      {batchNotice && (
+        <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-semibold text-emerald-800 flex items-center justify-between shadow-xs">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{batchNotice}</span>
+          </div>
+          <button onClick={() => setBatchNotice(null)} className="text-emerald-700 hover:text-emerald-900">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
@@ -108,6 +259,30 @@ export const AttendanceTable: React.FC<AttendanceTableProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => batchFileInputRef.current?.click()}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 rounded-lg shadow-sm transition-colors"
+            title="Unggah banyak foto sekaligus. Nama file (misal 1123123.jpg atau gusti.png) akan otomatis dicocokkan ke NIP / Nama peserta!"
+          >
+            <Upload className="w-3.5 h-3.5 text-amber-700" />
+            <span>📁 Batch Unggah Foto (NIP)</span>
+          </button>
+
+          <button
+            onClick={onOpenShareModal}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-stone-100 hover:bg-stone-200 border border-stone-200 text-stone-800 rounded-lg transition-colors"
+          >
+            <span>📱 Bagikan Google Form & QR</span>
+          </button>
+
+          <button
+            onClick={onOpenSyncModal}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg shadow-sm transition-colors"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Sinkronkan Sheet (CSV)</span>
+          </button>
+
           <button
             onClick={onOpenAddModal}
             className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-stone-900 hover:bg-stone-800 text-white rounded-lg shadow-sm transition-colors"
@@ -129,7 +304,7 @@ export const AttendanceTable: React.FC<AttendanceTableProps> = ({
             onClick={onResetDemo}
             className="px-3 py-2 text-xs font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors"
           >
-            Reset Contoh 14 Data
+            Reset Contoh Data
           </button>
         </div>
       </div>
@@ -218,21 +393,39 @@ export const AttendanceTable: React.FC<AttendanceTableProps> = ({
                         {index + 1}
                       </td>
                       <td className="py-3 px-4">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedPhotoModal({ url: item.photoUrl, name: item.name })}
-                          className="relative group w-10 h-12 rounded-md overflow-hidden border border-stone-200 bg-stone-100 block"
-                          title="Klik untuk melihat foto"
-                        >
-                          <img
-                            src={item.photoUrl}
-                            alt={item.name}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                          />
-                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                            <Eye className="w-3.5 h-3.5 text-white" />
-                          </div>
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPhotoModal({ id: item.id, url: item.photoUrl, name: item.name })}
+                            className="relative group w-10 h-12 rounded-md overflow-hidden border border-stone-200 bg-stone-100 block shrink-0"
+                            title="Klik untuk melihat foto"
+                          >
+                            <img
+                              src={resolvedUrlCache.get(item.photoUrl) || item.photoUrl}
+                              alt={item.name}
+                              onError={(e) => {
+                                // If Drive image fails to load via regular img tag, fallback to initials badge
+                                (e.target as HTMLElement).style.display = 'none';
+                              }}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                            />
+                            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                              <Eye className="w-3.5 h-3.5 text-white" />
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveAttendeeIdForUpload(item.id);
+                              singleFileInputRef.current?.click();
+                            }}
+                            className="p-1 rounded text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors"
+                            title="Ganti / unggah foto peserta ini"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                       <td className="py-3 px-4 font-semibold text-stone-900">
                         <div>{item.name}</div>

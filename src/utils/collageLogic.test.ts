@@ -11,6 +11,8 @@ import {
   paginateAttendees,
   validateNip,
   resolveAttendanceSubmission,
+  generatePdfFileName,
+  formatPdfSummary,
   SAMPLE_ATTENDEES
 } from './collageLogic.ts';
 import { AttendanceRecord } from '../types/attendance.ts';
@@ -21,15 +23,36 @@ test('formatIndonesianDate converts YYYY-MM-DD correctly', () => {
   assert.equal(formatIndonesianDate('2026-12-31'), '31 DESEMBER 2026');
 });
 
-test('paginateAttendees splits 14 items into 3 pages (6, 6, 2)', () => {
-  const pagi14 = filterAttendees(SAMPLE_ATTENDEES, '2026-10-26', 'Pagi');
-  assert.equal(pagi14.length, 14);
+test('generatePdfFileName & formatPdfSummary formats multi-page PDF output details correctly', () => {
+  // If there are 2 pages (e.g. 12 participants)
+  const fn2 = generatePdfFileName('Pagi', '2026-10-26', 2);
+  assert.equal(fn2, 'Dokumentasi_Absensi_P3K_Pagi_2026-10-26_(2_Halaman).pdf');
 
-  const pages = paginateAttendees(pagi14, 6);
-  assert.equal(pages.length, 3);
-  assert.equal(pages[0].length, 6);
-  assert.equal(pages[1].length, 6);
-  assert.equal(pages[2].length, 2);
+  const summary2 = formatPdfSummary(2, 12);
+  assert.equal(summary2, '1 File PDF (2 Halaman · 12 Peserta · Maks. 6 Foto/Hal)');
+
+  // 1 page
+  const fn1 = generatePdfFileName('Sore', '2026-10-26', 1);
+  assert.equal(fn1, 'Dokumentasi_Absensi_P3K_Sore_2026-10-26_(1_Halaman).pdf');
+});
+
+test('paginateAttendees splits 14 items into 3 pages (6, 6, 2) and 16 items into 3 pages (6, 6, 4)', () => {
+  const pagiRecords = filterAttendees(SAMPLE_ATTENDEES, '2026-10-26', 'Pagi');
+  // With the 2 new real user entries, total is 16
+  assert.equal(pagiRecords.length, 16);
+
+  const pages16 = paginateAttendees(pagiRecords, 6);
+  assert.equal(pages16.length, 3);
+  assert.equal(pages16[0].length, 6);
+  assert.equal(pages16[1].length, 6);
+  assert.equal(pages16[2].length, 4);
+
+  // Test 14 items explicitly
+  const pages14 = paginateAttendees(pagiRecords.slice(2), 6);
+  assert.equal(pages14.length, 3);
+  assert.equal(pages14[0].length, 6);
+  assert.equal(pages14[1].length, 6);
+  assert.equal(pages14[2].length, 2);
 });
 
 test('filterAttendees filters correctly by date and session', () => {
@@ -106,3 +129,36 @@ test('resolveAttendanceSubmission respects duplicate policies', () => {
   assert.equal(resOverwrite.updatedList.length, 1);
   assert.equal(resOverwrite.updatedList[0].name, 'Andi Pratama (Duplicate)');
 });
+
+test('extractDriveImageId correctly extracts ID from various Google Drive URLs', async () => {
+  const { extractDriveImageId, getDriveDirectImageUrl } = await import('./collageLogic.ts');
+  const url1 = 'https://drive.google.com/open?id=1a3XjL1j4GiPFVDxHyuhOYFvlOnUhPH90';
+  const id1 = extractDriveImageId(url1);
+  assert.equal(id1, '1a3XjL1j4GiPFVDxHyuhOYFvlOnUhPH90');
+
+  const directUrl = getDriveDirectImageUrl(url1);
+  assert.equal(directUrl, 'https://lh3.googleusercontent.com/d/1a3XjL1j4GiPFVDxHyuhOYFvlOnUhPH90');
+
+  const url2 = 'https://drive.google.com/file/d/1qkEdHTDBtQxta0hiqI9MujdCorG_Lf4E/view?usp=sharing';
+  const id2 = extractDriveImageId(url2);
+  assert.equal(id2, '1qkEdHTDBtQxta0hiqI9MujdCorG_Lf4E');
+});
+
+test('parseGoogleSheetCsv parses user Absensi P3K CSV correctly', async () => {
+  const { parseGoogleSheetCsv } = await import('./collageLogic.ts');
+  const csvData = `Timestamp, NIP,Nama Lengkap & Gelar,Unggah Foto Diri / Bukti Kehadiran,Sesi Absensi
+10/26/2026 14:43:03,1123123,aaaaaaaaaa,https://drive.google.com/open?id=1a3XjL1j4GiPFVDxHyuhOYFvlOnUhPH90,Pagi
+10/26/2026 16:00:49,1412414,gusti,https://drive.google.com/open?id=1qkEdHTDBtQxta0hiqI9MujdCorG_Lf4E,Pagi`;
+
+  const parsed = parseGoogleSheetCsv(csvData);
+  assert.equal(parsed.length, 2);
+  assert.equal(parsed[0].nip, '1123123');
+  assert.equal(parsed[0].name, 'aaaaaaaaaa');
+  assert.equal(parsed[0].session, 'Pagi');
+  assert.equal(parsed[0].date, '2026-10-26');
+  assert.ok(parsed[0].photoUrl.includes('1a3XjL1j4GiPFVDxHyuhOYFvlOnUhPH90'));
+
+  assert.equal(parsed[1].nip, '1412414');
+  assert.equal(parsed[1].name, 'gusti');
+});
+

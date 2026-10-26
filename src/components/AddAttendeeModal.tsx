@@ -34,7 +34,21 @@ export const AddAttendeeModal: React.FC<AddAttendeeModalProps> = ({
   const [session, setSession] = useState<AttendanceSession>(defaultSession);
   const [department, setDepartment] = useState('Dinas Kominfo');
   const [gender, setGender] = useState<'m' | 'f'>('m');
+  const [photoInputUrl, setPhotoInputUrl] = useState('');
+  const [uploadedPhotoUrl, setUploadedPhotoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const handlePhotoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setUploadedPhotoUrl(event.target.result as string);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,13 +65,18 @@ export const AddAttendeeModal: React.FC<AddAttendeeModalProps> = ({
       return;
     }
 
+    let finalPhotoUrl = uploadedPhotoUrl || photoInputUrl.trim();
+    if (!finalPhotoUrl) {
+      finalPhotoUrl = generateAvatarDataUrl(name.trim(), gender, department.slice(0, 10));
+    }
+
     const candidate = {
       timestamp: new Date().toISOString(),
       nip: nipVal.cleaned,
       name: name.trim(),
       session,
       date: selectedDate,
-      photoUrl: generateAvatarDataUrl(name.trim(), gender, department.slice(0, 10)),
+      photoUrl: finalPhotoUrl,
       department: department.trim()
     };
 
@@ -158,6 +177,46 @@ export const AddAttendeeModal: React.FC<AddAttendeeModalProps> = ({
               onChange={(e) => setDepartment(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-stone-300 text-xs focus:outline-none focus:ring-1 focus:ring-stone-900"
             />
+          </div>
+
+          <div className="bg-stone-50 p-3 rounded-xl border border-stone-200">
+            <label className="block text-xs font-bold text-stone-800 mb-1">
+              Foto Presensi (Opsional)
+            </label>
+            <p className="text-[11px] text-stone-500 mb-2">
+              Pilih file gambar dari perangkat Anda atau masukkan tautan Google Drive / Web.
+            </p>
+            <div className="flex items-center gap-3">
+              {uploadedPhotoUrl ? (
+                <div className="relative w-12 h-14 rounded-lg overflow-hidden border border-stone-300 shrink-0">
+                  <img src={uploadedPhotoUrl} alt="Preview" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setUploadedPhotoUrl(null)}
+                    className="absolute top-0 right-0 bg-stone-900/80 text-white text-[9px] px-1 rounded-bl"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : null}
+              <div className="flex-1 space-y-1.5">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoFileUpload}
+                  className="block w-full text-xs text-stone-600 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-stone-200 file:text-stone-800 hover:file:bg-stone-300 cursor-pointer"
+                />
+                {!uploadedPhotoUrl && (
+                  <input
+                    type="url"
+                    placeholder="Atau tautan foto / Google Drive (https://...)"
+                    value={photoInputUrl}
+                    onChange={(e) => setPhotoInputUrl(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded border border-stone-300 text-[11px] focus:outline-none focus:ring-1 focus:ring-stone-900"
+                  />
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="pt-3 border-t border-stone-100 flex items-center justify-end gap-2">

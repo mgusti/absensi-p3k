@@ -26,6 +26,25 @@ export function formatIndonesianDate(dateStr: string): string {
 }
 
 /**
+ * Generate standard filename for the combined multi-page PDF output
+ * e.g. "Dokumentasi_Absensi_P3K_Pagi_2026-10-26_(2_Halaman).pdf"
+ */
+export function generatePdfFileName(session: string, date: string, pageCount: number): string {
+  const safeSession = (session || 'Semua').replace(/\s+/g, '_');
+  const safeDate = date || new Date().toISOString().slice(0, 10);
+  const safePages = Math.max(1, pageCount);
+  return `Dokumentasi_Absensi_P3K_${safeSession}_${safeDate}_(${safePages}_Halaman).pdf`;
+}
+
+/**
+ * Summary badge text for the PDF export
+ */
+export function formatPdfSummary(pageCount: number, recordCount: number): string {
+  const pages = Math.max(1, pageCount);
+  return `1 File PDF (${pages} Halaman · ${recordCount} Peserta · Maks. 6 Foto/Hal)`;
+}
+
+/**
  * Filter attendees by date and optional session.
  * Excludes rejected records, keeps valid or flagged.
  */
@@ -54,6 +73,143 @@ export function paginateAttendees(
     pages.push(attendees.slice(i, i + pageSize));
   }
   return pages;
+}
+
+/**
+ * Extracts Google Drive file ID from open?id=, /file/d/, /d/, or uc?id= URLs
+ */
+export function extractDriveImageId(url: string): string | null {
+  if (!url) return null;
+  // Match id= parameter (open?id=, uc?id=, thumbnail?id=)
+  const idMatch = url.match(/[?&]id=([a-zA-Z0-9_-]{20,})/);
+  if (idMatch) return idMatch[1];
+
+  // Match /d/ or /file/d/ path
+  const dMatch = url.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
+  if (dMatch) return dMatch[1];
+
+  // Generic match if Google Drive / Google UserContent URL
+  if (url.includes('drive.google.com') || url.includes('googleusercontent.com')) {
+    const rawMatch = url.match(/[-\w]{25,}/);
+    if (rawMatch) return rawMatch[0];
+  }
+
+  return null;
+}
+
+/**
+ * Returns a high-res direct image URL from a Google Drive sharing link
+ */
+export function getDriveDirectImageUrl(url: string): string {
+  const fileId = extractDriveImageId(url);
+  if (!fileId) return url;
+  return `https://lh3.googleusercontent.com/d/${fileId}`;
+}
+
+/**
+ * Matches a local image filename to an attendee by NIP or Name
+ */
+export function matchPhotoFilenameToAttendee(
+  filename: string,
+  attendees: AttendanceRecord[]
+): AttendanceRecord | undefined {
+  const baseName = filename.replace(/\.[^/.]+$/, '').trim().toLowerCase();
+  const digitsOnly = baseName.replace(/\D/g, '');
+
+  return attendees.find((a) => {
+    // 1. Match exact NIP
+    if (digitsOnly && a.nip === digitsOnly) return true;
+    // 2. Match partial NIP if at least 4 digits
+    if (digitsOnly && digitsOnly.length >= 4 && a.nip.includes(digitsOnly)) return true;
+    // 3. Match Name
+    const lowerName = a.name.toLowerCase();
+    if (baseName && (lowerName.includes(baseName) || baseName.includes(lowerName))) return true;
+    return false;
+  });
+}
+
+/**
+ * Parses Google Form responses CSV exported from Google Sheets
+ */
+export function parseGoogleSheetCsv(csvContent: string): AttendanceRecord[] {
+  if (!csvContent || !csvContent.trim()) return [];
+
+  const lines = csvContent
+    .trim()
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) return [];
+
+  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
+
+  // Find column indices
+  let timestampIdx = headers.findIndex((h) => h.includes('timestamp') || h.includes('waktu'));
+  let nipIdx = headers.findIndex((h) => h.includes('nip'));
+  let nameIdx = headers.findIndex((h) => h.includes('nama'));
+  let photoIdx = headers.findIndex((h) => h.includes('foto') || h.includes('bukti') || h.includes('unggah') || h.includes('drive'));
+  let sessionIdx = headers.findIndex((h) => h.includes('sesi'));
+
+  // Fallbacks if header names are slightly different
+  if (timestampIdx === -1) timestampIdx = 0;
+  if (nipIdx === -1) nipIdx = 1;
+  if (nameIdx === -1) nameIdx = 2;
+  if (photoIdx === -1) photoIdx = 3;
+  if (sessionIdx === -1) sessionIdx = 4;
+
+  const records: AttendanceRecord[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const rawLine = lines[i];
+    // Split by comma outside quotes
+    const cols = rawLine.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map((c) => c.trim().replace(/^"|"$/g, ''));
+
+    const rawTime = cols[timestampIdx] || '';
+    const rawNip = cols[nipIdx] || '';
+    const rawName = cols[nameIdx] || '';
+    const rawPhoto = cols[photoIdx] || '';
+    const rawSession = cols[sessionIdx] || 'Pagi';
+
+    if (!rawNip && !rawName) continue;
+
+    // Parse date into YYYY-MM-DD
+    let dateStr = '2026-10-26';
+    if (rawTime) {
+      const parts = rawTime.split(' ')[0].split(/[\/\-]/);
+      if (parts.length === 3) {
+        // If MM/DD/YYYY (e.g. 10/26/2026)
+        if (parts[2].length === 4) {
+          const month = parts[0].padStart(2, '0');
+          const day = parts[1].padStart(2, '0');
+          const year = parts[2];
+          dateStr = `${year}-${month}-${day}`;
+        } else if (parts[0].length === 4) {
+          // YYYY-MM-DD
+          dateStr = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        }
+      }
+    }
+
+    const session: AttendanceSession = rawSession.toLowerCase().includes('sore') ? 'Sore' : 'Pagi';
+    const photoUrl = rawPhoto.includes('drive.google.com')
+      ? getDriveDirectImageUrl(rawPhoto)
+      : rawPhoto || generateAvatarDataUrl(rawName, 'm', 'Peserta P3K');
+
+    records.push({
+      id: `p3k-${i}-${Date.now()}`,
+      timestamp: rawTime ? new Date(rawTime).toISOString() : new Date().toISOString(),
+      nip: rawNip.replace(/\D/g, '') || rawNip,
+      name: rawName,
+      session,
+      date: dateStr,
+      photoUrl,
+      status: 'valid',
+      department: 'P3K / Tenaga Kerja'
+    });
+  }
+
+  return records;
 }
 
 /**
@@ -234,6 +390,29 @@ export function generateAvatarDataUrl(seedName: string, gender: 'm' | 'f' = 'm',
  * 14 participants -> Page 1 (6), Page 2 (6), Page 3 (2).
  */
 export const SAMPLE_ATTENDEES: AttendanceRecord[] = [
+  // User's Real Synchronized Google Form Entries (Absensi P3K)
+  {
+    id: 'p3k-real-01',
+    timestamp: '2026-10-26T14:43:03Z',
+    nip: '1123123',
+    name: 'aaaaaaaaaa',
+    session: 'Pagi',
+    date: '2026-10-26',
+    photoUrl: getDriveDirectImageUrl('https://drive.google.com/open?id=1a3XjL1j4GiPFVDxHyuhOYFvlOnUhPH90'),
+    status: 'valid',
+    department: 'Peserta P3K'
+  },
+  {
+    id: 'p3k-real-02',
+    timestamp: '2026-10-26T16:00:49Z',
+    nip: '1412414',
+    name: 'gusti',
+    session: 'Pagi',
+    date: '2026-10-26',
+    photoUrl: getDriveDirectImageUrl('https://drive.google.com/open?id=1qkEdHTDBtQxta0hiqI9MujdCorG_Lf4E'),
+    status: 'valid',
+    department: 'Peserta P3K'
+  },
   {
     id: 'att-01',
     timestamp: '2026-10-26T07:14:22Z',

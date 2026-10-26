@@ -16,7 +16,10 @@ import {
   Calendar,
   Layers,
   Sparkles,
-  FileArchive
+  FileArchive,
+  FileText,
+  Loader2,
+  HardDrive
 } from 'lucide-react';
 import {
   AttendanceRecord,
@@ -26,12 +29,20 @@ import {
   CollageTemplate,
   LogoPreset
 } from '../types/attendance.ts';
-import { filterAttendees, paginateAttendees, formatIndonesianDate } from '../utils/collageLogic.ts';
+import {
+  filterAttendees,
+  paginateAttendees,
+  formatIndonesianDate,
+  formatPdfSummary,
+  generatePdfFileName
+} from '../utils/collageLogic.ts';
 import {
   renderCollagePage,
   downloadCanvasAsPng,
+  downloadAllPagesAsPdf,
   downloadAllPagesAsZip,
-  copyCanvasToClipboard
+  copyCanvasToClipboard,
+  clearImageCache
 } from '../utils/collageRenderer.ts';
 
 interface CollageStudioProps {
@@ -52,6 +63,8 @@ export const CollageStudio: React.FC<CollageStudioProps> = ({
   const [isRendering, setIsRendering] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Filter attendees based on selected date & session
@@ -96,9 +109,47 @@ export const CollageStudio: React.FC<CollageStudioProps> = ({
     };
   }, [settings, attendees, currentPageIndex, totalPages, activeAttendees.length]);
 
+  const hasGoogleDrivePhotos = activeAttendees.some(
+    (a) => a.photoUrl && (a.photoUrl.includes('drive.google.com') || a.photoUrl.includes('googleusercontent.com'))
+  );
+
+  useEffect(() => {
+    const handleTokenChange = () => {
+      clearImageCache();
+      setCurrentPageIndex((prev) => prev);
+    };
+    window.addEventListener('gdrive_token_updated', handleTokenChange);
+    return () => window.removeEventListener('gdrive_token_updated', handleTokenChange);
+  }, []);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  /**
+   * Primary output: 1 single multi-page PDF document.
+   * If there are 2 images (pages), it produces a 2-page PDF document.
+   */
+  const handleDownloadAllPdf = async () => {
+    setIsDownloadingPdf(true);
+    setPdfProgress(`Menyiapkan 1 file PDF (${totalPages} halaman)...`);
+    try {
+      const res = await downloadAllPagesAsPdf(
+        activeAttendees,
+        settings,
+        (_current, _total, phase) => {
+          setPdfProgress(phase);
+        }
+      );
+      showToast(`✅ Berhasil! 1 File PDF (${res.pageCount} halaman) berhasil diunduh.`);
+    } catch (err: any) {
+      console.error('PDF export error:', err);
+      showToast('Gagal membuat dokumen PDF: ' + (err.message || ''));
+    } finally {
+      setIsDownloadingPdf(false);
+      setPdfProgress(null);
+    }
   };
 
   const handleDownloadSingle = () => {
@@ -173,12 +224,43 @@ export const CollageStudio: React.FC<CollageStudioProps> = ({
 
         {/* Quick actions */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Primary High-Visibility Action: 1 File PDF Multi-Page */}
+          <button
+            onClick={handleDownloadAllPdf}
+            disabled={isDownloadingPdf}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-red-600 hover:bg-red-700 text-white rounded-lg shadow-sm transition-all disabled:opacity-50"
+            title={`Unduh 1 file PDF lengkap berisi ${totalPages} halaman kolase`}
+          >
+            {isDownloadingPdf ? (
+              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+            ) : (
+              <FileText className="w-4 h-4 shrink-0" />
+            )}
+            <div className="text-left">
+              <span className="block leading-tight">
+                {isDownloadingPdf ? (pdfProgress || 'Membuat PDF...') : `Unduh 1 File PDF (${totalPages} Hal.)`}
+              </span>
+              <span className="text-[10px] font-normal opacity-90 block">
+                {totalPages === 1 ? '1 Gambar = 1 Hal. PDF' : `${totalPages} Gambar = ${totalPages} Halaman PDF`}
+              </span>
+            </div>
+          </button>
+
+          <button
+            onClick={handleDownloadSingle}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-stone-900 hover:bg-stone-800 text-white rounded-lg shadow-sm transition-colors"
+            title="Unduh gambar halaman yang sedang aktif saat ini sebagai PNG"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Unduh PNG (Hal. {currentPageIndex + 1})</span>
+          </button>
+
           <button
             onClick={handleCopyClipboard}
             className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-lg transition-colors"
           >
             {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{isCopied ? 'Tersalin!' : 'Salin Gambar'}</span>
+            <span>{isCopied ? 'Tersalin!' : 'Salin'}</span>
           </button>
 
           <button
@@ -186,25 +268,18 @@ export const CollageStudio: React.FC<CollageStudioProps> = ({
             className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors"
           >
             <Share2 className="w-3.5 h-3.5" />
-            <span>Bagikan Ringkasan</span>
-          </button>
-
-          <button
-            onClick={handleDownloadSingle}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-stone-900 hover:bg-stone-800 text-white rounded-lg shadow-sm transition-colors"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Unduh Halaman {currentPageIndex + 1} (PNG)</span>
+            <span>WA</span>
           </button>
 
           {totalPages > 1 && (
             <button
               onClick={handleDownloadAllZip}
               disabled={isDownloadingZip}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-amber-700 hover:bg-amber-800 text-white rounded-lg shadow-sm transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 px-2.5 py-2 text-xs font-semibold bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-lg transition-colors disabled:opacity-50"
+              title="Unduh semua gambar terpisah dalam ZIP"
             >
               <FileArchive className="w-3.5 h-3.5" />
-              <span>{isDownloadingZip ? 'Membuat ZIP...' : `Unduh Semua (${totalPages} Hal. ZIP)`}</span>
+              <span>ZIP</span>
             </button>
           )}
         </div>
@@ -330,6 +405,26 @@ export const CollageStudio: React.FC<CollageStudioProps> = ({
             {/* Info Summary below canvas */}
             <div className="mt-3 text-center text-xs text-stone-600">
               Menampilkan {pages[currentPageIndex]?.length || 0} dari total {activeAttendees.length} peserta pada sesi ini · Resolusi ekspor: {settings.orientation === 'portrait' ? '1080 × 1350 px (4:5)' : '1920 × 1080 px (16:9)'}
+            </div>
+
+            {/* Multi-page PDF Output Indicator */}
+            <div className="w-full mt-3 bg-red-50/80 border border-red-200/90 rounded-xl p-3 flex items-start gap-3 text-left">
+              <div className="w-8 h-8 rounded-lg bg-red-600 text-white flex items-center justify-center shrink-0 font-bold text-xs shadow-xs">
+                PDF
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-xs font-bold text-stone-900">
+                    Output: 1 Dokumen PDF ({totalPages} Halaman)
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
+                    {totalPages === 1 ? '1 Gambar = 1 Hal.' : `${totalPages} Gambar = ${totalPages} Halaman`}
+                  </span>
+                </div>
+                <p className="text-[11px] text-stone-600 mt-0.5 leading-relaxed">
+                  Sesuai format absensi P3K, setiap halaman memuat maksimal 6 foto peserta (grid 3×2). Semua {totalPages} halaman kolase disatukan menjadi <strong>1 file PDF utuh</strong> saat diekspor.
+                </p>
+              </div>
             </div>
           </div>
         </div>
